@@ -1357,12 +1357,15 @@ public class PersistentBinaryDeque<M> implements BinaryDeque<M> {
             try {
                 int truncatedEntries = segment.scan(scanner);
                 if (truncatedEntries > 0) {
+                    m_usageSpecificLog.warn(truncatedEntries + " entries truncated in PBD Segment: " + segment.file());
                     m_numObjects -= truncatedEntries;
                     if (segment.getNumEntries() == 0) {
                         // All entries were truncated mark the segment as quarantined
+                        m_usageSpecificLog.warn("Empty PBD Segment: " + segment.file() + ". Quarantining segment.");
                         quarantineSegment(entry);
                     }
                 }
+                m_usageSpecificLog.warn("Scanned PBD Segment: " + segment.file());
             } catch (IOException e) {
                 m_usageSpecificLog.warn("Error scanning segment: " + segment.file() + ". Quarantining segment.");
                 quarantineSegment(entry);
