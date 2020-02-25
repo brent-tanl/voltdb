@@ -24,12 +24,12 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 
-import org.voltcore.utils.DeferredSerialization;
 import org.voltdb.VoltType;
 import org.voltdb.catalog.Column;
 import org.voltdb.catalog.Table;
 import org.voltdb.common.Constants;
 import org.voltdb.utils.CatalogUtil;
+import org.voltdb.utils.SerializationHelper;
 
 import com.google_voltpatches.common.collect.ImmutableList;
 
@@ -39,12 +39,11 @@ import com.google_voltpatches.common.collect.ImmutableList;
  * own specific serialization format, to be used as header metadata
  * in a {@code BinaryDeque<M>} application.
  */
-public class ExportRowSchema extends ExportRow implements DeferredSerialization {
+public class ExportRowSchema extends ExportRow {
 
-    public long initialGenerationId;
+    public final long initialGenerationId;
     // Serialized schema data is preceded by fixed header
-    public static final int EXPORT_BUFFER_VERSION = 1;
-    private static final int EXPORT_SCHEMA_HEADER_BYTES = 1 + // export buffer version
+    private static final int EXPORT_SCHEMA_HEADER_BYTES =
             8 + // initial generation id
             8 + // generation id
             4 + // partition id
@@ -176,22 +175,16 @@ public class ExportRowSchema extends ExportRow implements DeferredSerialization 
      */
     public static ExportRowSchema deserialize(ByteBuffer buf) throws IOException {
         try {
-            byte version = buf.get();
-            if (version != EXPORT_BUFFER_VERSION) {
-                throw new IllegalArgumentException("Illegal version, expected: " + EXPORT_BUFFER_VERSION
-                        + ", got: " + version);
-            }
             long initialGenId = buf.getLong();
             long genId = buf.getLong();
             int partitionId = buf.getInt();
-            int size = buf.getInt();
-            int position = buf.position();
 
             String tableName = ExportRow.decodeString(buf);
             List<String> colNames = new ArrayList<>();
             List<VoltType> colTypes = new ArrayList<>();
             List<Integer> colLengths = new ArrayList<>();
-            while (buf.position() < position + size) {
+            int columnCount = buf.getInt();
+            for (int i = 0; i < columnCount; ++i) {
                 colNames.add(ExportRow.decodeString(buf));
                 colTypes.add(VoltType.get(buf.get()));
                 colLengths.add(buf.getInt());
@@ -203,33 +196,24 @@ public class ExportRowSchema extends ExportRow implements DeferredSerialization 
         }
     }
 
-    @Override
     public void serialize(ByteBuffer buf) throws IOException {
         try {
-            int required = getSerializedSize();
-            if (buf.remaining() < required) {
-                throw new IllegalArgumentException("Insufficient space, required: " + required
-                        + ", available: " + buf.remaining());
-            }
-            buf.put((byte)EXPORT_BUFFER_VERSION);
             buf.putLong(this.initialGenerationId);
             buf.putLong(this.generation);
             buf.putInt(this.partitionId);
-            buf.putInt(required - EXPORT_SCHEMA_HEADER_BYTES); // size of schema
-            buf.putInt(this.tableName.length());
-            buf.put(this.tableName.getBytes(Constants.UTF8ENCODING));
+            SerializationHelper.writeString(tableName, buf);
 
             Iterator<String> itNames = this.names.iterator();
             Iterator<VoltType> itTypes = this.types.iterator();
             Iterator<Integer> itSizes = this.lengths.iterator();
 
+            buf.putInt(names.size());
             while(itNames.hasNext()) {
                 String colName = itNames.next();
                 VoltType colType = itTypes.next();
                 Integer colSize = itSizes.next();
 
-                buf.putInt(colName.length());
-                buf.put(colName.getBytes(Constants.UTF8ENCODING));
+                SerializationHelper.writeString(colName, buf);
                 buf.put(colType.getValue());
                 buf.putInt(colSize);
             }
@@ -239,20 +223,14 @@ public class ExportRowSchema extends ExportRow implements DeferredSerialization 
         }
     }
 
-    @Override
-    public void cancel() {
-        // *void*
-    }
-
-    @Override
-    public int getSerializedSize() throws IOException {
-        int size = 0;
+    public int getSerializedSize() {
+        int size = EXPORT_SCHEMA_HEADER_BYTES + 4 /* table name length */
+                + tableName.getBytes(Constants.UTF8ENCODING).length;
         for (String colName : this.names) {
-            size += 4 /*colName len*/ + colName.length() + 1 /*value type*/ + 4 /*value len*/;
+            size += 4 /* colName len */ + colName.getBytes(Constants.UTF8ENCODING).length + 1 /* value type */
+                    + 4 /* value len */;
         }
-        return EXPORT_SCHEMA_HEADER_BYTES +
-                4 /*table name length*/ + this.tableName.length() +
-                size /*schema size*/;
+        return size;
     }
 
     @Override
